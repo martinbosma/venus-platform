@@ -1,6 +1,26 @@
 #include <QJsonDocument>
+#include <QNetworkInterface>
 
 #include "network_controller.hpp"
+
+// The IPv6 addresses of a network interface, from the kernel: connman doesn't
+// report the link-local ones.
+static QStringList ipv6Addresses(const QString &interfaceName)
+{
+	QStringList addresses;
+	if (interfaceName.isEmpty())
+		return addresses;
+
+	const QList<QNetworkAddressEntry> entries = QNetworkInterface::interfaceFromName(interfaceName).addressEntries();
+	for (const QNetworkAddressEntry &entry: entries) {
+		QHostAddress ip = entry.ip();
+		if (ip.protocol() != QAbstractSocket::IPv6Protocol)
+			continue;
+		ip.setScopeId(QString());
+		addresses.append(QString("%1/%2").arg(ip.toString()).arg(entry.prefixLength()));
+	}
+	return addresses;
+}
 
 int VeQItemJson::setValue(const QVariant &value)
 {
@@ -100,6 +120,7 @@ void NetworkController::connectServiceSignals(CmService *service)
 {
 	connect(service, &CmService::ipv4Changed, this, &NetworkController::buildServicesList);
 	connect(service, &CmService::ipv4ConfigChanged, this, &NetworkController::buildServicesList);
+	connect(service, &CmService::ipv6Changed, this, &NetworkController::buildServicesList);
 	connect(service, &CmService::nameserversChanged, this, &NetworkController::buildServicesList);
 	connect(service, &CmService::nameserversConfigChanged, this, &NetworkController::buildServicesList);
 
@@ -149,6 +170,12 @@ void NetworkController::buildServicesList()
 				m.insert("Netmask", ipv4["Netmask"].toString());
 				m.insert("Mac", ethernet["Address"].toString());
 				m.insert("Nameservers", dns);
+
+				// Only for a connected service: the Wi-Fi networks found in a scan
+				// share the interface of the connected one.
+				QString state = properties["State"].toString();
+				bool connected = state == "ready" || state == "online";
+				m.insert("Ipv6Addresses", connected ? ipv6Addresses(ethernet["Interface"].toString()) : QStringList());
 
 				list.insert(properties["Name"].toString(), m);
 
